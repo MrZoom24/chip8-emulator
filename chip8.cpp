@@ -1,6 +1,7 @@
 #include "chip8.h"
 #include <fstream>
 #include <iostream>
+#include <iomanip>
 
 const unsigned int FONTSET_SIZE = 80;
 const unsigned int START_ADDRESS = 0x200;
@@ -34,9 +35,9 @@ void Chip8::initialize(){
     I = 0;
     sp = 0;
 
-    // clear display
+    // clear display 
     for(int i = 0; i < 64*32; ++i){
-        gfx[i] == 0;
+        gfx[i] = 0;
     }
 
     // clear stack, registers and memory
@@ -70,7 +71,6 @@ bool Chip8::loadROM(const std::string& filename){
         return false;
     }
 
-
     int index = START_ADDRESS;
     char byte;
 
@@ -89,21 +89,30 @@ bool Chip8::loadROM(const std::string& filename){
 }
 
 void Chip8::emulateCycle(){
+    if (pc < 0x200 || pc >= 4095) {
+        std::cerr << "PC out of bounds: 0x" << std::hex << pc << std::endl;
+        return;
+    }
+
+    // Fetch opcode before printing
     opcode = (memory[pc] << 8) | memory[pc + 1];
     pc += 2;
 
-    // Opcodes not yet implemented: 
-    //  BNNN, EX9E, EXA1, FX0A
+    std::cout << "Opcode: 0x" << std::hex << std::setw(4) << std::setfill('0') << opcode << std::endl;
 
     if((opcode & 0xF000) == 0x0000){
-        if((opcode & 0x00F0) == 0x00E0){
+        if(opcode == 0x0000){
+            // 0000: NOP or program end - do nothing but don't error
+            return;
+        }else if((opcode & 0x00FF) == 0x00E0){
             // 00E0: Clear the screen
             for(int i = 0; i < 64*32; ++i){
                 gfx[i] = 0;
             }
+            drawFlag = true;  // Set draw flag after clearing screen
         }else if((opcode & 0x00FF) == 0x00EE){
             // 00EE: Return from subrutine
-            sp--;
+            --sp;
             pc = stack[sp];
         }else{
             std::cout << "Unknown opcode: " << std::hex << opcode << std::endl;
@@ -114,7 +123,7 @@ void Chip8::emulateCycle(){
     }else if((opcode & 0xF000) == 0x2000){
         // 2NNN: Call subroutine at NNN
         stack[sp] = pc;
-        sp++;
+        ++sp;
         pc = opcode & 0x0FFF;
     }else if((opcode & 0xF000) == 0x3000){
         // 3XNN: Skip next instruction if Vx == NN
@@ -225,8 +234,59 @@ void Chip8::emulateCycle(){
         V[x] = (rand() % 256) & nn;
     }else if((opcode & 0xF000) == 0xD000){
         // DXYN: Draw sprite 
-        // TODO: Actually implement drawing.
-        std::cout << "Draw sprite opcode called: " << std::hex << opcode << std::endl;
+        uint8_t x = V[(opcode & 0x0F00) >> 8];
+        uint8_t y = V[(opcode & 0x00F0) >> 4];
+        uint8_t height = opcode & 0x000F;
+        uint8_t pixel;
+
+        V[0xF] = 0;
+
+        for (int yline = 0; yline < height; yline++) {
+            pixel = memory[I + yline];
+            for (int xline = 0; xline < 8; xline++) {
+                if ((pixel & (0x80 >> xline)) != 0) {
+                    int totalX = (x + xline) % 64;
+                    int totalY = (y + yline) % 32;
+                    int index = totalY * 64 + totalX;
+
+                    if (gfx[index] == 1) {
+                        V[0xF] = 1;  // Collision detected
+                    }
+                    gfx[index] ^= 1;
+                }
+            }
+        }
+
+        drawFlag = true;
+    }else if ((opcode & 0xF0FF) == 0xE09E) {
+        // EX9E: Skip next instruction if key with value Vx is pressed
+        uint8_t x = (opcode & 0x0F00) >> 8;
+        if (keypad[V[x]] != 0) {
+            pc += 2;
+        }
+    }else if ((opcode & 0xF0FF) == 0xE0A1) {
+        //EXA1: Skip next instruction if key with value Vx is not pressed
+        uint8_t x = (opcode & 0x0F00) >> 8;
+        if (keypad[V[x]] == 0) {
+            pc += 2;
+        }
+    }else if((opcode & 0xF0FF) == 0xF00A){
+        // FX0A: Wait for a key press, store the key in Vx
+        uint8_t x = (opcode & 0x0F00) >> 8;
+        bool keyPressed = false;
+
+        for (int i = 0; i < 16; ++i) {
+            if (keypad[i] != 0) {
+                V[x] = i;
+                keyPressed = true;
+                break;
+            }
+        }
+
+        if (!keyPressed) {
+            // Repeat this opcode until a key is pressed by not incrementing pc
+            pc -= 2;
+        }
     }else if ((opcode & 0xF000) == 0xF000){
         uint8_t x = (opcode & 0x0F00) >> 8;
         switch (opcode & 0x00FF) {
@@ -248,7 +308,8 @@ void Chip8::emulateCycle(){
                 break;
             case 0x29: 
                 // FX29: Set I to font sprite address for digit in Vx
-                I = V[x] * 5;  // each sprite is 5 bytes long
+                // Add font base address 0x50
+                I = 0x50 + (V[x] * 5);  // each sprite is 5 bytes long
                 break;
             case 0x33: 
                 // FX33: Store BCD of Vx in memory at I, I+1, I+2
@@ -261,11 +322,15 @@ void Chip8::emulateCycle(){
                 for (int i = 0; i <= x; ++i){
                     memory[I + i] = V[i];
                 }
+                // Increment I register (required by many ROMs)
+                I += x + 1;
                 break;
             case 0x65: 
                 // FX65: Load V0 to Vx from memory starting at I
                 for (int i = 0; i <= x; ++i)
                     V[i] = memory[I + i];
+                // Increment I register (required by many ROMs)
+                I += x + 1;
                 break;
             default:
                 std::cout << "Unknown opcode: " << std::hex << opcode << std::endl;
