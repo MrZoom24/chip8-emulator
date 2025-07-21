@@ -36,7 +36,7 @@ void Chip8::initialize(){
 
     // clear display
     for(int i = 0; i < 64*32; ++i){
-        gfx[i] == 0;
+        gfx[i] = 0;
     }
 
     // clear stack, registers and memory
@@ -225,8 +225,30 @@ void Chip8::emulateCycle(){
         V[x] = (rand() % 256) & nn;
     }else if((opcode & 0xF000) == 0xD000){
         // DXYN: Draw sprite 
-        // TODO: Actually implement drawing.
-        std::cout << "Draw sprite opcode called: " << std::hex << opcode << std::endl;
+        uint8_t x = V[(opcode & 0x0F00) >> 8];
+        uint8_t y = V[(opcode & 0x00F0) >> 4];
+        uint8_t height = opcode & 0x000F;
+        uint8_t pixel;
+
+        V[0xF] = 0;
+
+        for (int yline = 0; yline < height; yline++) {
+            pixel = memory[I + yline];
+            for (int xline = 0; xline < 8; xline++) {
+                if ((pixel & (0x80 >> xline)) != 0) {
+                    int totalX = (x + xline) % 64;
+                    int totalY = (y + yline) % 32;
+                    int index = totalY * 64 + totalX;
+
+                    if (gfx[index] == 1) {
+                        V[0xF] = 1;  // Collision detected
+                    }
+                    gfx[index] ^= 1;
+                }
+            }
+        }
+
+        drawFlag = true;
     }else if ((opcode & 0xF000) == 0xF000){
         uint8_t x = (opcode & 0x0F00) >> 8;
         switch (opcode & 0x00FF) {

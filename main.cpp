@@ -1,67 +1,46 @@
-#include <SDL2/SDL.h>
-#include <cstdint>
 #include <iostream>
-#include "chip8.h" 
+#include "chip8.h"
+#include "display.h"
+#include <SDL2/SDL.h>
 
 int main(int argc, char* argv[]) {
-    // Initialize SDL
-    if (SDL_Init(SDL_INIT_VIDEO) < 0) {
-        std::cerr << "SDL could not initialize! SDL_Error: " << SDL_GetError() << std::endl;
+    if (argc != 2) {
+        std::cerr << "Usage: " << argv[0] << " path_to_rom.ch8" << std::endl;
         return 1;
     }
 
-    // Create window and renderer
-    SDL_Window* window = SDL_CreateWindow("CHIP-8 Emulator",
-        SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-        640, 320, SDL_WINDOW_SHOWN);
-
-    if (!window) {
-        std::cerr << "Window creation failed: " << SDL_GetError() << std::endl;
-        SDL_Quit();
-        return 1;
-    }
-
-    SDL_Renderer* renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
-    SDL_Texture* texture = SDL_CreateTexture(renderer,
-        SDL_PIXELFORMAT_RGBA8888,
-        SDL_TEXTUREACCESS_STREAMING,
-        64, 32); // Original CHIP-8 resolution
-
-    // Create Chip8 instance
     Chip8 chip8;
+    chip8.initialize();
 
-    // Test draw: fill checkerboard pattern
-    for (int y = 0; y < 32; ++y) {
-        for (int x = 0; x < 64; ++x) {
-            chip8.gfx[y * 64 + x] = (x + y) % 2;
-        }
-    }
-    chip8.drawFlag = true;
-
-    // Main loop — for now I just draw once
-    if (chip8.drawFlag) {
-        uint32_t pixels[64 * 32];
-
-        for (int i = 0; i < 64 * 32; ++i) {
-            pixels[i] = chip8.gfx[i] ? 0xFFFFFFFF : 0x000000FF; // white or black
-        }
-
-        SDL_UpdateTexture(texture, nullptr, pixels, 64 * sizeof(uint32_t));
-        SDL_RenderClear(renderer);
-        SDL_RenderCopy(renderer, texture, nullptr, nullptr);
-        SDL_RenderPresent(renderer);
-
-        chip8.drawFlag = false;
+    if (!chip8.loadROM(argv[1])) {
+        std::cerr << "Failed to load ROM: " << argv[1] << std::endl;
+        return 1;
     }
 
-    // Wait 2 seconds before closing
-    SDL_Delay(2000);
+    initDisplay();
 
-    // Cleanup
-    SDL_DestroyTexture(texture);
-    SDL_DestroyRenderer(renderer);
-    SDL_DestroyWindow(window);
-    SDL_Quit();
+    bool quit = false;
+    SDL_Event event;
 
+    while (!quit) {
+        // Poll SDL events
+        while (SDL_PollEvent(&event)) {
+            if (event.type == SDL_QUIT) {
+                quit = true;
+            }
+            // TODO: handle keyboard input here
+        }
+
+        chip8.emulateCycle();
+
+        if (chip8.drawFlag) {
+            updateDisplay(chip8.gfx);
+            chip8.drawFlag = false;
+        }
+
+        SDL_Delay(2); // Small delay to reduce CPU usage
+    }
+
+    destroyDisplay();
     return 0;
 }
